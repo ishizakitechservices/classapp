@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+dev-dist/
+coverage/
+.curriculum-cache/
+.backup-phase3a/
+.openchamber/
+.DS_Store
+*.log
+.env*
+!.env.example
+firebase-applet-config.json

@@ -1,0 +1,156 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation for UserProfile
+    function isValidUserProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'name']) &&
+             data.keys().hasOnly(['uid', 'email', 'name', 'schoolLevel', 'targetExam', 'createdAt', 'updatedAt']) &&
+             data.uid == uid &&
+             data.email is string && data.email.size() <= 200 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             (!('schoolLevel' in data) || (data.schoolLevel is string && data.schoolLevel.size() <= 50)) &&
+             (!('targetExam' in data) || (data.targetExam is string && data.targetExam.size() <= 50));
+    }
+
+    // Validation for QuizAttempt
+    function isValidQuizAttempt(data, uid) {
+      return data.keys().hasAll(['id', 'userId', 'quizTitle', 'score', 'totalQuestions', 'percentage', 'timestamp']) &&
+             data.keys().hasOnly(['id', 'userId', 'quizTitle', 'subjectCode', 'score', 'totalQuestions', 'percentage', 'timestamp']) &&
+             data.userId == uid &&
+             isValidId(data.id) &&
+             data.quizTitle is string && data.quizTitle.size() > 0 && data.quizTitle.size() <= 200 &&
+             (!('subjectCode' in data) || (data.subjectCode is string && data.subjectCode.size() <= 20)) &&
+             data.score is number && data.score >= 0 &&
+             data.totalQuestions is number && data.totalQuestions > 0 &&
+             data.score <= data.totalQuestions &&
+             data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
+             data.timestamp is string && data.timestamp.size() <= 50;
+    }
+
+    // Validation for StudyDeck
+    function isValidStudyDeck(data, uid) {
+      return data.keys().hasAll(['id', 'userId', 'topic', 'cardCount', 'cards', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'userId', 'topic', 'subjectCode', 'cardCount', 'cards', 'createdAt']) &&
+             data.userId == uid &&
+             isValidId(data.id) &&
+             data.topic is string && data.topic.size() > 0 && data.topic.size() <= 200 &&
+             (!('subjectCode' in data) || (data.subjectCode is string && data.subjectCode.size() <= 20)) &&
+             data.cardCount is number && data.cardCount >= 0 && data.cardCount <= 100 &&
+             data.cards is list && data.cards.size() <= 100 &&
+             data.createdAt is string && data.createdAt.size() <= 50;
+    }
+
+    // Validation for StudyNote
+    function isValidStudyNote(data, uid) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'content', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'userId', 'title', 'subjectCode', 'content', 'source', 'createdAt']) &&
+             data.userId == uid &&
+             isValidId(data.id) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             (!('subjectCode' in data) || (data.subjectCode is string && data.subjectCode.size() <= 20)) &&
+             data.content is string && data.content.size() <= 100000 &&
+             (!('source' in data) || (data.source is string && data.source.size() <= 100)) &&
+             data.createdAt is string && data.createdAt.size() <= 50;
+    }
+
+    // Users collection and subcollections
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false; // Users cannot be enumerated
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().uid == existing().uid &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'schoolLevel', 'targetExam', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Quiz attempts subcollection
+      match /quizAttempts/{attemptId} {
+        allow get: if isOwner(userId) && isValidId(attemptId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(attemptId) &&
+                         incoming().id == attemptId &&
+                         isValidQuizAttempt(incoming(), userId);
+
+        allow update: if false; // Quiz attempts are immutable score records
+
+        allow delete: if isOwner(userId) && isValidId(attemptId);
+      }
+
+      // Study decks subcollection
+      match /studyDecks/{deckId} {
+        allow get: if isOwner(userId) && isValidId(deckId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(deckId) &&
+                         incoming().id == deckId &&
+                         isValidStudyDeck(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(deckId) &&
+                         incoming().id == existing().id &&
+                         incoming().userId == existing().userId &&
+                         isValidStudyDeck(incoming(), userId) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['topic', 'subjectCode', 'cardCount', 'cards']);
+
+        allow delete: if isOwner(userId) && isValidId(deckId);
+      }
+
+      // Study notes subcollection
+      match /studyNotes/{noteId} {
+        allow get: if isOwner(userId) && isValidId(noteId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(noteId) &&
+                         incoming().id == noteId &&
+                         isValidStudyNote(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(noteId) &&
+                         incoming().id == existing().id &&
+                         incoming().userId == existing().userId &&
+                         isValidStudyNote(incoming(), userId) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'subjectCode', 'content', 'source']);
+
+        allow delete: if isOwner(userId) && isValidId(noteId);
+      }
+    }
+  }
+}

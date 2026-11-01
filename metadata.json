@@ -1,0 +1,6 @@
+{
+  "name": "ClassApp",
+  "description": "A clean, mobile-first student learning web app designed for simplicity, speed, and responsive cross-device study.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_DEEPSEEK_API"]
+}

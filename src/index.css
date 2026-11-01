@@ -1,0 +1,470 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+/* Manual dark mode: the app toggles a `.dark` class on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+    /* ---- Glass tokens (light) ---- */
+    --glass-bg: rgba(255, 255, 255, 0.52);
+    --glass-bg-hover: rgba(255, 255, 255, 0.72);
+    --glass-nav-bg: rgba(255, 255, 255, 0.62);
+    --glass-strong-bg: rgba(255, 255, 255, 0.88);
+    --glass-panel-bg: rgba(255, 255, 255, 0.97);
+    --glass-inner-bg: rgba(255, 255, 255, 0.42);
+    --glass-input-bg: rgba(255, 255, 255, 0.62);
+
+    --glass-border: rgba(255, 255, 255, 0.9);
+    --glass-border-soft: rgba(15, 23, 42, 0.08);
+    --glass-border-hover: rgba(99, 102, 241, 0.4);
+    --glass-input-border: rgba(15, 23, 42, 0.14);
+
+    --glass-sheen: rgba(255, 255, 255, 0.5);
+    --glass-highlight: rgba(255, 255, 255, 0.6);
+    --glass-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 32px -20px rgba(15, 23, 42, 0.45);
+    --glass-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 18px 40px -22px rgba(15, 23, 42, 0.5);
+    --glass-blur: 16px;
+
+    /* ---- Ambient canvas (light) ---- */
+    --ambient-base: #f3f2f9;
+    --ambient-1: rgba(99, 102, 241, 0.34);
+    --ambient-2: rgba(20, 184, 166, 0.26);
+    --ambient-3: rgba(236, 72, 153, 0.24);
+    --ambient-4: rgba(250, 204, 21, 0.22);
+  }
+
+  .dark {
+    --glass-bg: rgba(255, 255, 255, 0.1);
+    --glass-bg-hover: rgba(255, 255, 255, 0.15);
+    --glass-nav-bg: rgba(23, 23, 26, 0.72);
+    --glass-strong-bg: rgba(24, 24, 27, 0.92);
+    --glass-panel-bg: rgba(18, 18, 21, 0.97);
+    --glass-inner-bg: rgba(255, 255, 255, 0.05);
+    --glass-input-bg: rgba(255, 255, 255, 0.06);
+
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --glass-border-soft: rgba(255, 255, 255, 0.09);
+    --glass-border-hover: rgba(129, 140, 248, 0.5);
+    --glass-input-border: rgba(255, 255, 255, 0.16);
+
+    --glass-sheen: rgba(255, 255, 255, 0.07);
+    --glass-highlight: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 1px 1px rgba(0, 0, 0, 0.35), 0 16px 40px -24px rgba(0, 0, 0, 0.85);
+    --glass-shadow-hover: 0 2px 3px rgba(0, 0, 0, 0.4), 0 22px 52px -26px rgba(0, 0, 0, 0.9);
+
+    --ambient-base: #08080b;
+    --ambient-1: rgba(99, 102, 241, 0.26);
+    --ambient-2: rgba(20, 184, 166, 0.17);
+    --ambient-3: rgba(236, 72, 153, 0.18);
+    --ambient-4: rgba(59, 130, 246, 0.17);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+    background-color: var(--ambient-base);
+  }
+}
+
+@layer components {
+  /* ---- Ambient canvas: what the glass actually blurs ---- */
+  .ambient {
+    position: fixed;
+    inset: 0;
+    z-index: -10;
+    overflow: hidden;
+    pointer-events: none;
+    background-color: var(--ambient-base);
+  }
+
+  .ambient-blob {
+    position: absolute;
+    border-radius: 9999px;
+  }
+
+  .ambient-blob-1 {
+    width: 95vmax;
+    height: 95vmax;
+    top: -44vmax;
+    left: -26vmax;
+    background: radial-gradient(circle, var(--ambient-1) 0%, transparent 66%);
+  }
+
+  .ambient-blob-2 {
+    width: 85vmax;
+    height: 85vmax;
+    top: -22vmax;
+    right: -30vmax;
+    background: radial-gradient(circle, var(--ambient-2) 0%, transparent 66%);
+  }
+
+  .ambient-blob-3 {
+    width: 80vmax;
+    height: 80vmax;
+    bottom: -34vmax;
+    left: 6vmax;
+    background: radial-gradient(circle, var(--ambient-3) 0%, transparent 66%);
+  }
+
+  .ambient-blob-4 {
+    width: 62vmax;
+    height: 62vmax;
+    bottom: -26vmax;
+    right: -16vmax;
+    background: radial-gradient(circle, var(--ambient-4) 0%, transparent 66%);
+  }
+
+  /* ---- Frosted surfaces ---- */
+  .glass,
+  .glass-strong,
+  .glass-panel,
+  .glass-nav,
+  .glass-input {
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  }
+
+  /* Standard in-flow card */
+  .glass {
+    background-color: var(--glass-bg);
+    background-image: linear-gradient(155deg, var(--glass-sheen), transparent 62%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);
+  }
+
+  /* Modals, popovers, dropdowns: denser so text stays legible */
+  .glass-strong {
+    background-color: var(--glass-strong-bg);
+    background-image: linear-gradient(155deg, var(--glass-sheen), transparent 58%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+
+  /* Long reading surfaces + chat: near opaque, still blurred at the edges */
+  .glass-panel {
+    background-color: var(--glass-panel-bg);
+    border: 1px solid var(--glass-border-soft);
+  }
+
+  /* Sticky chrome: header, sidebar, bottom nav */
+  .glass-nav {
+    background-color: var(--glass-nav-bg);
+  }
+
+  /* Inputs, selects, textareas */
+  .glass-input {
+    background-color: var(--glass-input-bg);
+    border: 1px solid var(--glass-input-border);
+    -webkit-backdrop-filter: blur(8px) saturate(140%);
+    backdrop-filter: blur(8px) saturate(140%);
+  }
+
+  /* Nested surface: no second blur pass, just tone */
+  .glass-inner {
+    background-color: var(--glass-inner-bg);
+    border: 1px solid var(--glass-border-soft);
+  }
+
+  /* Interactive glass cards */
+  .glass-hover {
+    transition-property: background-color, border-color, box-shadow, transform;
+    transition-duration: 180ms;
+    transition-timing-function: ease;
+  }
+
+  .glass-hover:hover {
+    background-color: var(--glass-bg-hover);
+    border-color: var(--glass-border-hover);
+    box-shadow: var(--glass-shadow-hover);
+  }
+
+  .glass-hover:active {
+    transform: scale(0.995);
+  }
+}
+
+/* Solid fallbacks: no backdrop-filter support, or the user asked for less transparency. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-strong,
+  .glass-nav,
+  .glass-input {
+    background-color: var(--glass-panel-bg);
+    background-image: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong,
+  .glass-nav,
+  .glass-input {
+    background-color: var(--glass-panel-bg);
+    background-image: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .ambient {
+    display: none;
+  }
+}
+
+/* Safe area insets for mobile edge-to-edge screens */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Touch optimization */
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   File viewer
+   The viewer takes over the screen, so its surfaces are solid and precise
+   rather than glassy: page, grid and slide stage behave like real documents.
+   ========================================================================== */
+
+@keyframes viewerIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.996);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.viewer-enter {
+  animation: viewerIn 170ms ease-out;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- pdf.js selectable text layer ---- */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+}
+
+.pdf-text-layer span,
+.pdf-text-layer br {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer span::selection {
+  background: rgba(79, 70, 229, 0.3);
+}
+
+.pdf-text-layer span::-moz-selection {
+  background: rgba(79, 70, 229, 0.3);
+}
+
+/* ---- Word page ---- */
+.docx-page {
+  padding: clamp(20px, 6%, 60px);
+  font-family: 'Calibri', 'Carlito', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.docx-content > :first-child {
+  margin-top: 0;
+}
+
+.docx-content > :last-child {
+  margin-bottom: 0;
+}
+
+.docx-content p {
+  margin: 0 0 0.85em;
+}
+
+.docx-content h1,
+.docx-content h2,
+.docx-content h3,
+.docx-content h4 {
+  color: var(--doc-heading, inherit);
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.2em 0 0.5em;
+}
+
+.docx-content h1 {
+  font-size: 1.8em;
+}
+
+.docx-content h2 {
+  font-size: 1.42em;
+}
+
+.docx-content h3 {
+  font-size: 1.2em;
+}
+
+.docx-content h4 {
+  font-size: 1.05em;
+}
+
+.docx-content ul,
+.docx-content ol {
+  margin: 0.7em 0;
+  padding-left: 1.5em;
+  list-style-position: outside;
+}
+
+.docx-content ul {
+  list-style: disc;
+}
+
+.docx-content ol {
+  list-style: decimal;
+}
+
+.docx-content li {
+  margin: 0.28em 0;
+}
+
+.docx-content li > ul,
+.docx-content li > ol {
+  margin: 0.2em 0;
+}
+
+.docx-content a {
+  color: #2f5bd7;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.docx-content strong {
+  font-weight: 600;
+}
+
+.docx-content blockquote {
+  border-left: 3px solid var(--doc-border, #e4e4e7);
+  color: var(--doc-muted, inherit);
+  margin: 0.9em 0;
+  padding-left: 1em;
+}
+
+.docx-content hr {
+  border: 0;
+  border-top: 1px solid var(--doc-border, #e4e4e7);
+  margin: 1.4em 0;
+}
+
+.docx-content table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+  margin: 1em 0;
+  max-width: 100%;
+}
+
+.docx-content td,
+.docx-content th {
+  border: 1px solid var(--doc-border, #e4e4e7);
+  padding: 0.42em 0.6em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.docx-content th {
+  background: var(--doc-surface, transparent);
+  font-weight: 600;
+}
+
+.docx-content img {
+  height: auto;
+  max-width: 100%;
+}
+
+/* ---- Note reading column: scales with the chosen text size ---- */
+.note-reading {
+  line-height: 1.72;
+}
+
+/* The note's own page colour wins over the formatter's neutral palette, and
+   every text element follows the chosen reading size. KaTeX keeps its own
+   relative sizing so formulas still set scripts correctly. */
+.note-reading :is(p, span, div, li, strong, em, td, th, blockquote, h2, h3, h4):not(.katex *) {
+  color: inherit;
+  font-size: 1em;
+  line-height: 1.72;
+}
+
+/* Code blocks keep a dark surface, so they keep light text. */
+.note-reading [data-block='code'],
+.note-reading [data-block='code'] * {
+  color: #e4e4e7;
+}
+
+.note-reading :is(h2, h3, h4) {
+  font-weight: 700;
+}
+
+.note-reading h2 {
+  font-size: 1.55em;
+  border-color: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.note-reading h3 {
+  font-size: 1.24em;
+}
+
+.note-reading h4 {
+  font-size: 0.92em;
+  letter-spacing: 0.07em;
+}
+
+.note-reading a {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+
+.note-reading .katex,
+.note-reading .katex * {
+  color: inherit;
+}
+

@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "Student profile and personal study dashboard settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "schoolLevel": { "type": "string" },
+        "targetExam": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "name"]
+    },
+    "quizAttempt": {
+      "title": "QuizAttempt",
+      "description": "Student quiz assessment score record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "quizTitle": { "type": "string" },
+        "subjectCode": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "percentage": { "type": "number" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "userId", "quizTitle", "score", "totalQuestions", "percentage", "timestamp"]
+    },
+    "studyDeck": {
+      "title": "StudyDeck",
+      "description": "Student flashcard deck for spaced repetition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "topic": { "type": "string" },
+        "subjectCode": { "type": "string" },
+        "cardCount": { "type": "number" },
+        "cards": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "topic", "cardCount", "cards", "createdAt"]
+    },
+    "studyNote": {
+      "title": "StudyNote",
+      "description": "Student revision note and synthesized summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "subjectCode": { "type": "string" },
+        "content": { "type": "string" },
+        "source": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "content", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "userProfile",
+      "description": "Student profile document secured to authenticated student owner"
+    },
+    "/users/{userId}/quizAttempts/{attemptId}": {
+      "schema": "quizAttempt",
+      "description": "Student quiz results subcollection scoped to the authenticated student"
+    },
+    "/users/{userId}/studyDecks/{deckId}": {
+      "schema": "studyDeck",
+      "description": "Student flashcard decks subcollection scoped to the authenticated student"
+    },
+    "/users/{userId}/studyNotes/{noteId}": {
+      "schema": "studyNote",
+      "description": "Student revision notes subcollection scoped to the authenticated student"
+    }
+  }
+}
