@@ -673,7 +673,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           name: user.displayName || 'Student',
           schoolLevel: 'SHS',
           targetExam: 'WASSCE 2026',
-        }).catch((err) => console.warn('Firestore user profile sync warning:', err));
+        }).catch((err: Error) => console.warn('Firestore user profile sync warning:', err));
 
         // Load quiz attempts from Firestore and merge
         fetchQuizAttemptsFromFirestore(user.uid)
@@ -685,11 +685,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 prev.forEach((a) => {
                   if (!map.has(a.id)) map.set(a.id, a);
                 });
-                return Array.from(map.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+                return Array.from(map.values()).sort((a: QuizAttempt, b: QuizAttempt) => b.timestamp.localeCompare(a.timestamp));
               });
             }
           })
-          .catch((err) => console.warn('Firestore quiz fetch error:', err));
+          .catch((err: Error) => console.warn('Firestore quiz fetch error:', err));
       }
     });
 
@@ -1855,7 +1855,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await dbPut(STORES.QUIZ_ATTEMPTS, record);
 
     if (auth.currentUser) {
-      syncQuizAttemptToFirestore(auth.currentUser.uid, record).catch((err) => {
+      syncQuizAttemptToFirestore(auth.currentUser.uid, record).catch((err: Error) => {
         console.warn('Could not sync quiz attempt to Firestore:', err);
       });
     }
