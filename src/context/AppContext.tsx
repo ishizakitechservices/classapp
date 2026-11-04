@@ -1214,20 +1214,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // so quiz/flashcard "Ask Adom AI" callbacks cannot start a second stream.
     if (aiAbortRef.current || isAiThinking) return;
 
-    // Auto-detect image intent: questions about places, people, objects, landmarks,
-    // animals, plants, devices, recipes, historical artifacts, geography.
+    // Auto-detect image intent: only genuine requests for a real photograph or
+    // diagram. Common filler ("what do", "show me", "view") must NOT trigger it,
+    // otherwise every routine question fires an unnecessary image search.
     const imageKeywords = [
-      'picture', 'photo', 'image', 'what does', 'what do', 'look like', 'show me',
-      'sight', 'view', 'appearance', 'visual', 'drawing', 'diagram of', 'photograph',
+      'picture', 'photo', 'image', 'photograph', 'drawing', 'diagram of', 'look like',
     ];
     const autoWantImage = imageKeywords.some((kw) => text.toLowerCase().includes(kw));
 
-    // Auto-detect chart intent: questions about graphs, charts, plots, equations,
-    // functions, data, statistics, trends, coordinates.
+    // Auto-detect chart intent: only genuine requests for a graph/chart. Broad math
+    // words ("function", "equation", "data", "solve") must NOT trigger it on their own.
     const chartKeywords = [
-      'graph', 'chart', 'plot', 'line graph', 'bar chart', 'pie chart', 'scatter',
-      'equation', 'function', 'y =', 'y=', 'quadratic', 'linear', 'trend', 'data',
-      'statistics', 'coordinates', 'inequality', 'inequalities', 'sine', 'cosine',
+      'graph', 'chart', 'plot', 'line graph', 'bar chart', 'pie chart', 'scatter plot',
+      'inequality', 'inequalities', 'sine wave', 'cosine wave',
     ];
     const autoWantChart = chartKeywords.some((kw) => text.toLowerCase().includes(kw));
 
