@@ -1214,6 +1214,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // so quiz/flashcard "Ask Adom AI" callbacks cannot start a second stream.
     if (aiAbortRef.current || isAiThinking) return;
 
+    // Auto-detect image intent: questions about places, people, objects, landmarks,
+    // animals, plants, devices, recipes, historical artifacts, geography.
+    const imageKeywords = [
+      'picture', 'photo', 'image', 'what does', 'what do', 'look like', 'show me',
+      'sight', 'view', 'appearance', 'visual', 'drawing', 'diagram of', 'photograph',
+    ];
+    const autoWantImage = imageKeywords.some((kw) => text.toLowerCase().includes(kw));
+
+    // Auto-detect chart intent: questions about graphs, charts, plots, equations,
+    // functions, data, statistics, trends, coordinates.
+    const chartKeywords = [
+      'graph', 'chart', 'plot', 'line graph', 'bar chart', 'pie chart', 'scatter',
+      'equation', 'function', 'y =', 'y=', 'quadratic', 'linear', 'trend', 'data',
+      'statistics', 'coordinates', 'inequality', 'inequalities', 'sine', 'cosine',
+    ];
+    const autoWantChart = chartKeywords.some((kw) => text.toLowerCase().includes(kw));
+
+    // Auto teacher mode: explanatory questions trigger Socratic tutoring.
+    const autoTeacher = /^(explain|how|why|what is|what are|teach me|show me|solve|step by step|walk me through|break down)/i.test(text);
+
     const appendUser = opts?.appendUser !== false;
     const userMsg: ChatMessage =
       opts?.existingUserMsg || {
@@ -1239,9 +1259,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       contextSubject,
       fileContext,
       deep,
-      wantImage: opts?.wantImage === true,
-      wantChart: opts?.wantChart === true,
-      teacherMode: opts?.teacherMode === true,
+      wantImage: autoWantImage,
+      wantChart: autoWantChart,
+      teacherMode: opts?.teacherMode === true || autoTeacher,
     };
     setIsAiThinking(true);
     setIsChatThinking(true);
@@ -1278,9 +1298,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         memory: buildMemoryDigest(),
         // Only the opening question asks for a title, so later turns cost nothing extra.
         wantTitle: isFirstMessage,
-        wantImage: opts?.wantImage === true,
-        wantChart: opts?.wantChart === true,
-        teacherMode: opts?.teacherMode === true,
+        wantImage: autoWantImage,
+        wantChart: autoWantChart,
+        teacherMode: opts?.teacherMode === true || autoTeacher,
         signal: controller.signal,
         onDelta: (delta) => {
           // A stop must not leave half a sentence streaming in after the tap.

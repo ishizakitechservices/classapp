@@ -205,9 +205,55 @@ TEACHER MODE (Socratic tutoring):
 - Keep every explanation at SHS/WASSCE level. Never jump to university maths.
 - End each turn by asking the student what they think comes next.`;
 
-/** JSON block patterns extracted from model output. */
-const IMAGE_JSON_RE = /\{[^{}]*"needs_image"[^{}]*\}/;
-const CHART_JSON_RE = /\{[^{}]*"chart"[^{}]*\}/;
+/**
+ * Extract a balanced JSON object starting with `{"key":` from text.
+ * Handles nested objects. Returns the matched substring or null.
+ * Searches from the end of the text first (AI usually appends JSON at the end).
+ */
+function extractJsonBlock(text: string, key: string): string | null {
+  const pattern = new RegExp(`"${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`);
+  // Find all occurrences of the key, try each from last to first.
+  const occurrences: number[] = [];
+  let searchFrom = 0;
+  while (true) {
+    const m = text.slice(searchFrom).search(pattern);
+    if (m === -1) break;
+    const pos = searchFrom + m;
+    occurrences.push(pos);
+    searchFrom = pos + 1;
+  }
+
+  for (let i = occurrences.length - 1; i >= 0; i--) {
+    const keyPos = occurrences[i];
+    // Walk backward to find the opening brace of the containing object.
+    let braceStart = keyPos;
+    while (braceStart > 0 && text[braceStart - 1] !== '{') braceStart--;
+    if (text[braceStart] !== '{') continue;
+
+    // Walk forward counting braces to find the matching close.
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let j = braceStart; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          return text.slice(braceStart, j + 1);
+        }
+      }
+    }
+  }
+  return null;
+}
 
 export type DeepSeekModelId = (typeof DEEPSEEK_MODEL_IDS)[number];
 
@@ -774,6 +820,8 @@ export class DeepSeekProvider {
     chart?: ChartSpec;
     teacherMode?: boolean;
   } {
+    console.log('[DEBUG finaliseChatReply] wantImage:', wantImage, 'wantChart:', wantChart, 'teacherMode:', teacherMode);
+    console.log('[DEBUG finaliseChatReply] rawText ends with:', JSON.stringify(rawText.slice(-200)));
     // Pull the TITLE line out of the answer so students never see the plumbing.
     let replyText = rawText;
     let nudge: string | undefined;
@@ -784,12 +832,12 @@ export class DeepSeekProvider {
     }
 
     // Extract the image-search JSON block (if image mode was requested).
-    let images: Array<{ title: string; image_url: string; thumbnail: string; source_url: string }> | undefined;
+    let images: Array<{ title: string; image_url: string; thumbnail: string; source_url: string; _searchQuery?: string }> | undefined;
     if (wantImage) {
-      const imgMatch = replyText.match(IMAGE_JSON_RE);
-      if (imgMatch) {
+      const imgJson = extractJsonBlock(replyText, 'needs_image');
+      if (imgJson) {
         try {
-          const intent = JSON.parse(imgMatch[0]);
+          const intent = JSON.parse(imgJson);
           if (intent.needs_image && typeof intent.search_query === 'string' && intent.search_query.trim()) {
             // The server route will fetch real images for this query.
             images = [{
@@ -803,25 +851,34 @@ export class DeepSeekProvider {
         } catch {
           // Invalid JSON: no images, text answer still stands.
         }
-        // Remove the JSON block from the visible answer.
-        replyText = replyText.replace(IMAGE_JSON_RE, '').trim();
+        // Remove the JSON block from the visible answer (use index-based removal
+        // so nested braces don't confuse String.replace).
+        const idx = replyText.indexOf(imgJson);
+        if (idx !== -1) {
+          replyText = (replyText.slice(0, idx) + replyText.slice(idx + imgJson.length)).trim();
+        }
       }
     }
 
     // Extract the chart spec JSON block (if chart mode was requested).
     let chart: ChartSpec | undefined;
     if (wantChart) {
-      const chartMatch = replyText.match(CHART_JSON_RE);
-      if (chartMatch) {
+      const chartJson = extractJsonBlock(replyText, 'chart');
+      console.log('[DEBUG finaliseChatReply] chartJson extracted:', chartJson ? chartJson.slice(0, 80) + '...' : null);
+      if (chartJson) {
         try {
-          const parsed = JSON.parse(chartMatch[0]);
+          const parsed = JSON.parse(chartJson);
           if (parsed.chart && parsed.chart.kind) {
             chart = parsed.chart as ChartSpec;
           }
         } catch {
           // Invalid JSON: no chart, text answer still stands.
         }
-        replyText = replyText.replace(CHART_JSON_RE, '').trim();
+        const idx = replyText.indexOf(chartJson);
+        console.log('[DEBUG finaliseChatReply] chartJson indexOf:', idx);
+        if (idx !== -1) {
+          replyText = (replyText.slice(0, idx) + replyText.slice(idx + chartJson.length)).trim();
+        }
       }
     }
 

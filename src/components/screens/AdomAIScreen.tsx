@@ -7,6 +7,24 @@ import { FlashcardsTemplateModal } from '../FlashcardsTemplateModal';
 import MathChart from '../charts/MathChart';
 import InequalityGraph from '../charts/InequalityGraph';
 import { type ChartSpec } from '../../shared/mathCharts';
+
+/** Strip a chart JSON block from message content and return { cleanContent, chartSpec }.
+ * The AI appends `{"chart": {...}}` at the end of its reply. We match from the
+ * opening brace to the matching closing brace, handling nested objects. */
+function extractChartFromContent(content: string): { cleanContent: string; chartSpec: ChartSpec | null } {
+  const chartMatch = content.match(/\{"chart":[\s\S]*\}$/);
+  if (!chartMatch) return { cleanContent: content, chartSpec: null };
+  try {
+    const parsed = JSON.parse(chartMatch[0]);
+    if (parsed.chart && parsed.chart.kind) {
+      const cleanContent = content.replace(chartMatch[0], '').trim();
+      return { cleanContent, chartSpec: parsed.chart as ChartSpec };
+    }
+  } catch {
+    // ignore
+  }
+  return { cleanContent: content, chartSpec: null };
+}
 import { STUDY_SIZES, STUDY_CAPS, studySizeLabel, type StudySize } from '../../shared/studyLimits';
 import { strandsFor, loadCurriculum } from '../../shared/curriculum/index';
 import {
@@ -604,6 +622,12 @@ export const AdomAIScreen: React.FC = () => {
 
             {chatMessages.map((msg: any) => {
               const isUser = msg.sender === 'user';
+              // Extract chart spec from content if server didn't strip it
+              const chartExtraction = msg.chartData
+                ? { cleanContent: msg.content, chartSpec: msg.chartData as ChartSpec }
+                : extractChartFromContent(msg.content);
+              const chartSpec = chartExtraction.chartSpec;
+              const displayContent = chartExtraction.cleanContent;
               return (
                 <div key={msg.id} className={`flex gap-2.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
                   {!isUser && (
@@ -624,7 +648,7 @@ export const AdomAIScreen: React.FC = () => {
                     ) : msg.error ? (
                       <div className="space-y-2">
                         {/* Genuine text that already arrived stays readable above the failure note. */}
-                        {msg.content ? <FormattedContent content={msg.content} /> : null}
+                        {displayContent ? <FormattedContent content={displayContent} /> : null}
                         <div className="bg-neutral-900/[0.07] dark:bg-white/10/70 rounded-xl p-3 space-y-2">
                           <div className="text-[10px] font-mono font-semibold text-neutral-500 uppercase">
                             Adom AI couldn't answer
@@ -643,8 +667,8 @@ export const AdomAIScreen: React.FC = () => {
                       </div>
                     ) : (
                       <>
-                        {msg.content ? (
-                          <FormattedContent content={msg.content} streaming={!!msg.streaming} />
+                        {displayContent ? (
+                          <FormattedContent content={displayContent} streaming={!!msg.streaming} />
                         ) : (
                           <div className="flex items-center gap-1 pt-1 text-neutral-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
@@ -703,16 +727,16 @@ export const AdomAIScreen: React.FC = () => {
                                 <X className="w-3 h-3" />
                               </button>
                             </div>
-                            {msg.kind === 'inequalities' || (msg.chartData as ChartSpec)?.kind === 'inequalities' ? (
+                            {chartSpec?.kind === 'inequalities' ? (
                               <InequalityGraph
-                                inequalities={(msg.chartData as ChartSpec)?.inequalities || []}
+                                inequalities={chartSpec.inequalities || []}
                                 width={340}
                                 height={260}
                                 className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
                               />
                             ) : (
                               <MathChart
-                                spec={(msg.chartData as ChartSpec) || activeChart!}
+                                spec={chartSpec || activeChart!}
                                 width={340}
                                 height={260}
                                 className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
