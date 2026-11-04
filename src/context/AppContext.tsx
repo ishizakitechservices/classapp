@@ -85,7 +85,17 @@ import {
 } from '../services/aiService';
 import { STUDY_SIZES, clampStudyCount, type StudyKind, type StudySize } from '../shared/studyLimits';
 import { formOf } from '../shared/subjects';
+import { type ChartSpec } from '../shared/mathCharts';
 import { getStoredStudySet, putStoredStudySet } from '../services/studyCache';
+import {
+  startSpeechToText,
+  isSpeechToTextAvailable,
+  speak,
+  stopSpeaking,
+  isReadAloudAvailable,
+} from '../lib/voice';
+import { ocrImage } from '../lib/ocr';
+import { type ImageResult } from '../services/aiService';
 import {
   auth,
   signInWithPopup,
@@ -186,7 +196,7 @@ interface AppContextType {
   // Adom AI Chat, Intelligent Study Tools & Quizzes
   chatMessages: ChatMessage[];
 
-  sendMessage: (text: string, contextSubject?: string, fileContext?: { name: string; content: string }, deep?: boolean) => Promise<void>;
+  sendMessage: (text: string, contextSubject?: string, fileContext?: { name: string; content: string }, deep?: boolean, opts?: { wantImage?: boolean; wantChart?: boolean; teacherMode?: boolean }) => Promise<void>;
   stopAiResponse: () => void;
   retryLastMessage: (deep?: boolean) => Promise<void>;
   /** Saved conversations, newest first, with automatic titles. */
@@ -202,6 +212,25 @@ interface AppContextType {
   threadLoadingId: string | null;
   threadError: string | null;
   aiEngineStatus: 'deepseek' | 'local_fallback' | 'checking';
+
+  // Teacher mode & rich AI output
+  teacherMode: boolean;
+  setTeacherMode: (enabled: boolean) => void;
+  activeChart: ChartSpec | null;
+  setActiveChart: (spec: ChartSpec | null) => void;
+  activeImages: ImageResult[];
+  setActiveImages: (imgs: ImageResult[]) => void;
+
+  // Voice & OCR (free, browser-based, zero server cost)
+  isListening: boolean;
+  startListening: (onResult: (text: string, isFinal: boolean) => void) => void;
+  stopListening: () => void;
+  isSpeechToTextAvailable: () => boolean;
+  readAloud: (text: string, onEnd?: () => void) => void;
+  stopReadAloud: () => void;
+  isReadAloudAvailable: () => boolean;
+  ocrImage: (file: File | Blob | string) => Promise<string>;
+
   activeQuizData: { title: string; subjectCode?: string; questions: QuizQuestion[] } | null;
   setActiveQuizData: React.Dispatch<React.SetStateAction<{ title: string; subjectCode?: string; questions: QuizQuestion[] } | null>>;
   activeFlashcardsData: { topic: string; flashcards: Flashcard[] } | null;
@@ -382,6 +411,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     topic: string;
     flashcards: Flashcard[];
   } | null>(null);
+
+  // Teacher mode & rich output
+  const [teacherMode, setTeacherModeState] = useState(false);
+  const [activeChart, setActiveChartState] = useState<ChartSpec | null>(null);
+  const [activeImages, setActiveImagesState] = useState<ImageResult[]>([]);
+  const [isListening, setIsListening] = useState(false);
 
   // Network status
   const [isOnline, setIsOnline] = useState<boolean>(
@@ -994,6 +1029,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     contextSubject?: string;
     fileContext?: { name: string; content: string };
     deep?: boolean;
+    wantImage?: boolean;
+    wantChart?: boolean;
+    teacherMode?: boolean;
   }>({});
 
   /**
@@ -1084,6 +1122,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsChatThinking(false);
   };
 
+  const speechRecognitionRef = React.useRef<any>(null);
+
+  // ---- Teacher mode & rich output ----
+  const setTeacherMode = (enabled: boolean) => {
+    setTeacherModeState(enabled);
+  };
+
+  const setActiveChart = (spec: ChartSpec | null) => {
+    setActiveChartState(spec);
+  };
+
+  const setActiveImages = (imgs: ImageResult[]) => {
+    setActiveImagesState(imgs);
+  };
+
+  // ---- Voice (free, browser Web Speech API) ----
+  const startListening = (onResult: (text: string, isFinal: boolean) => void) => {
+    if (isListening) return;
+    const controller = startSpeechToText((text, isFinal) => {
+      onResult(text, isFinal);
+    }, (err) => {
+      console.warn('Speech-to-text error:', err);
+      setIsListening(false);
+    });
+    speechRecognitionRef.current = controller;
+    setIsListening(true);
+  };
+
+  const stopListening = () => {
+    setIsListening(false);
+    speechRecognitionRef.current?.stop();
+    speechRecognitionRef.current = null;
+  };
+
+  // ---- Read aloud (free, browser Web Speech API) ----
+  const readAloud = (text: string, onEnd?: () => void) => {
+    speak(text, { lang: 'en-GB', rate: 1, onEnd });
+  };
+
+  const stopReadAloud = () => {
+    stopSpeaking();
+  };
+
+  // ---- OCR (free, Tesseract.js in browser) ----
+  const handleOcrImage = async (file: File | Blob | string): Promise<string> => {
+    return ocrImage(file);
+  };
+
   /**
    * Long-term memory: a short, capped digest of recent questions from ALL chats so a new
    * conversation still "remembers" what the student has been studying. Capped to keep
@@ -1115,6 +1201,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       appendUser?: boolean;
       /** The already-visible user message, reused so thread IDs stay stable on retry. */
       existingUserMsg?: ChatMessage;
+      /** Ask DeepSeek whether a web image helps and fetch real results. */
+      wantImage?: boolean;
+      /** Ask DeepSeek for a chart spec rendered client-side. */
+      wantChart?: boolean;
+      /** Socratic tutoring: guide with questions instead of direct answers. */
+      teacherMode?: boolean;
     }
   ) => {
     if (!text.trim()) return;
@@ -1143,7 +1235,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const controller = new AbortController();
     aiAbortRef.current = controller;
-    lastChatRequestRef.current = { contextSubject, fileContext, deep };
+    lastChatRequestRef.current = {
+      contextSubject,
+      fileContext,
+      deep,
+      wantImage: opts?.wantImage === true,
+      wantChart: opts?.wantChart === true,
+      teacherMode: opts?.teacherMode === true,
+    };
     setIsAiThinking(true);
     setIsChatThinking(true);
 
@@ -1179,6 +1278,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         memory: buildMemoryDigest(),
         // Only the opening question asks for a title, so later turns cost nothing extra.
         wantTitle: isFirstMessage,
+        wantImage: opts?.wantImage === true,
+        wantChart: opts?.wantChart === true,
+        teacherMode: opts?.teacherMode === true,
         signal: controller.signal,
         onDelta: (delta) => {
           // A stop must not leave half a sentence streaming in after the tap.
@@ -1190,6 +1292,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
       });
 
+      // Rich output: chart, images, teacher mode
+      if (response.chart) setActiveChartState(response.chart);
+      if (response.images?.length) setActiveImagesState(response.images);
+      if (response.teacherMode) setTeacherModeState(true);
+
       const botMsg: ChatMessage = {
         id: botId,
         sender: 'assistant',
@@ -1198,6 +1305,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         mode: response.mode,
         engine: response.engine,
         interactiveData: response.interactiveData,
+        ...(response.chart ? { chartData: response.chart } : {}),
+        ...(response.images?.length ? { images: response.images } : {}),
         ...(response.partial
           ? {
               error: 'The connection ended before this answer finished. You can retry for the rest.',
@@ -1301,6 +1410,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       history: kept,
       appendUser: false,
       existingUserMsg: lastUser,
+      wantImage: last.wantImage,
+      wantChart: last.wantChart,
+      teacherMode: last.teacherMode,
     });
   };
 
@@ -2545,6 +2657,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         threadLoadingId,
         threadError,
         aiEngineStatus,
+        teacherMode,
+        setTeacherMode,
+        activeChart,
+        setActiveChart,
+        activeImages,
+        setActiveImages,
+        isListening,
+        startListening,
+        stopListening,
+        readAloud,
+        stopReadAloud,
+        isSpeechToTextAvailable,
+        isReadAloudAvailable,
+        ocrImage: handleOcrImage,
         activeQuizData,
         setActiveQuizData,
         activeFlashcardsData,

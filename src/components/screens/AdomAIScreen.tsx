@@ -4,6 +4,9 @@ import { useAuth } from '../../context/AuthContext';
 import { FormattedContent } from '../FormattedContent';
 import { QuizTemplateModal } from '../QuizTemplateModal';
 import { FlashcardsTemplateModal } from '../FlashcardsTemplateModal';
+import MathChart from '../charts/MathChart';
+import InequalityGraph from '../charts/InequalityGraph';
+import { type ChartSpec } from '../../shared/mathCharts';
 import { STUDY_SIZES, STUDY_CAPS, studySizeLabel, type StudySize } from '../../shared/studyLimits';
 import { strandsFor, loadCurriculum } from '../../shared/curriculum/index';
 import {
@@ -23,6 +26,13 @@ import {
   MessageSquare,
   Paperclip,
   Brain,
+  Mic,
+  MicOff,
+  Speaker,
+  Image as ImageIcon,
+  BarChart3,
+  ScatterChart,
+  PieChart,
 } from 'lucide-react';
 
 interface VaultNote {
@@ -41,6 +51,7 @@ const ANSWER_STYLES: Array<{ label: string; prompt: string }> = [
 export const AdomAIScreen: React.FC = () => {
   const {
     chatMessages,
+    setChatMessages,
     sendMessage,
     stopAiResponse,
     retryLastMessage,
@@ -67,6 +78,20 @@ export const AdomAIScreen: React.FC = () => {
     newChat,
     openThread,
     deleteThread,
+    teacherMode,
+    setTeacherMode,
+    activeChart,
+    setActiveChart,
+    activeImages,
+    setActiveImages,
+    isListening,
+    startListening,
+    stopListening,
+    readAloud,
+    stopReadAloud,
+    isSpeechToTextAvailable,
+    isReadAloudAvailable,
+    ocrImage: ocrImageFn,
   } = useApp() as any;
 
   const { user: authUser } = useAuth();
@@ -83,6 +108,7 @@ export const AdomAIScreen: React.FC = () => {
   const [inputVal, setInputVal] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [deepThink, setDeepThink] = useState(false);
+  const [ocrFile, setOcrFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   /** Blocks a second send from the same Enter press (keydown + form submit). */
@@ -177,8 +203,14 @@ export const AdomAIScreen: React.FC = () => {
     // answer-style chip must not wipe a half-written question.
     if (!presetText) setInputVal('');
     if (textareaRef.current && !presetText) textareaRef.current.style.height = 'auto';
+    // Auto teacher mode: explanatory questions trigger Socratic tutoring automatically.
+    const autoTeacher = /^(explain|how|why|what is|what are|teach me|show me|solve|step by step|walk me through|break down)/i.test(text);
+
     try {
-      await sendMessage(text, selectedSubject || undefined, attachedNote || undefined, deepThink);
+      await sendMessage(text, selectedSubject || undefined, attachedNote || undefined, deepThink, {
+        // wantImage and wantChart are NOT set here — DeepSeek auto-decides based on the question.
+        teacherMode: autoTeacher,
+      });
     } finally {
       sendLockRef.current = false;
     }
@@ -658,6 +690,84 @@ export const AdomAIScreen: React.FC = () => {
                           </button>
                         ) : null}
 
+                        {/* Rich output: chart or graph (rendered client-side, zero AI tokens) */}
+                        {!msg.streaming && (msg.chartData || activeChart) && (
+                          <div className="mt-3 pt-2 border-t border-neutral-500/15 dark:border-white/10">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-[10px] font-mono text-neutral-500 uppercase">Chart</span>
+                              <button
+                                onClick={() => setActiveChart(null)}
+                                className="p-1 text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+                                title="Remove chart"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                            {msg.kind === 'inequalities' || (msg.chartData as ChartSpec)?.kind === 'inequalities' ? (
+                              <InequalityGraph
+                                inequalities={(msg.chartData as ChartSpec)?.inequalities || []}
+                                width={340}
+                                height={260}
+                                className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+                              />
+                            ) : (
+                              <MathChart
+                                spec={(msg.chartData as ChartSpec) || activeChart!}
+                                width={340}
+                                height={260}
+                                className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+                              />
+                            )}
+                          </div>
+                        )}
+
+                        {/* Rich output: web images fetched server-side */}
+                        {!msg.streaming && msg.images?.length && (
+                          <div className="mt-3 pt-2 border-t border-neutral-500/15 dark:border-white/10">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-[10px] font-mono text-neutral-500 uppercase">Images from the web</span>
+                              <button
+                                onClick={() => {
+                                  setActiveImages([]);
+                                  // Also clear from the message
+                                  setChatMessages((prev: any[]) =>
+                                    prev.map((m: any) =>
+                                      m.id === msg.id ? { ...m, images: [] } : m
+                                    )
+                                  );
+                                }}
+                                className="p-1 text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+                                title="Remove images"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {msg.images.map((img: any, i: number) => (
+                                <div key={i} className="relative group">
+                                  <img
+                                    src={img.thumbnail || img.image_url}
+                                    alt={img.title || 'Image'}
+                                    className="w-full h-24 object-cover rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22150%22><text x=%2250%22 y=%2250%22 font-size=%2212%22 text-anchor=%22middle%22 fill=%22%236b7280%22>Image unavailable</text></svg>';
+                                    }}
+                                  />
+                                  <a
+                                    href={img.source_url || img.image_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"
+                                  >
+                                    <span className="text-white text-xs font-medium bg-black/60 px-2 py-0.5 rounded">Open source</span>
+                                  </a>
+                                  <p className="text-[10px] text-neutral-500 mt-1 line-clamp-1">{img.title}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Answer actions: only once the answer is finished. Acting on half
                             an answer would copy/save/quote an incomplete reply. */}
                         {!msg.streaming && msg.content ? (
@@ -784,6 +894,76 @@ export const AdomAIScreen: React.FC = () => {
               >
                 <Brain className="w-4 h-4" />
               </button>
+
+              {/* AI auto-decides images, charts, and teacher mode based on your question.
+                   Manual tools: voice input, read-aloud, OCR. */}
+              <div className="flex items-center gap-1 shrink-0">
+                {isSpeechToTextAvailable() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isListening) {
+                        stopListening();
+                      } else {
+                        startListening((text: string, isFinal: boolean) => {
+                          if (isFinal) setInputVal(text);
+                        });
+                      }
+                    }}
+                    aria-pressed={isListening}
+                    title={isListening ? 'Stop voice input' : 'Speak instead of typing'}
+                    className={`p-1.5 rounded-full shrink-0 ${
+                      isListening
+                        ? 'bg-rose-500 text-white'
+                        : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+                {isReadAloudAvailable() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Read aloud the last assistant answer
+                      const last = [...chatMessages]
+                        .reverse()
+                        .find((m: any) => m.sender === 'assistant' && m.content && !m.error);
+                      if (last) readAloud(last.content);
+                    }}
+                    title="Read the last answer aloud"
+                    className="p-1.5 rounded-full shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+                  >
+                    <Speaker className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/*';
+                    input.onchange = (e) => {
+                      const file = (e.target as HTMLInputElement).files?.[0] ?? null;
+                      if (file) {
+                        setOcrFile(file);
+                        ocrImageFn(file).then((text: string) => {
+                          setInputVal((prev: string) => (prev ? prev + '\n\n' : '') + 'Extract this text and explain it:\n\n' + text);
+                          setOcrFile(null);
+                        }).catch((err: any) => {
+                          alert('OCR failed: ' + err);
+                          setOcrFile(null);
+                        });
+                      }
+                    };
+                    input.click();
+                  }}
+                  title="Extract text from an image (OCR)"
+                  className="p-1.5 rounded-full shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-white"
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
               {isChatThinking ? (
                 <button

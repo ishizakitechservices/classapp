@@ -12,12 +12,20 @@
 
 import { ChatMessage, QuizQuestion, Flashcard } from '../types';
 import { batchesFor, clampStudyCount } from '../shared/studyLimits';
+import { type ChartSpec } from '../shared/mathCharts';
 
 export interface HealthCheckResult {
   isServerReachable: boolean;
   hasDeepSeekKey: boolean;
   model: string;
   modelValid: boolean;
+}
+
+export interface ImageResult {
+  title: string;
+  image_url: string;
+  thumbnail: string;
+  source_url: string;
 }
 
 export interface ChatResponseResult {
@@ -31,6 +39,29 @@ export interface ChatResponseResult {
   /** True when the stream ended before the server's authoritative final event. */
   partial?: boolean;
   interactiveData?: ChatMessage['interactiveData'];
+  /** Real web images fetched server-side when DeepSeek decided an image helps. */
+  images?: ImageResult[];
+  /** Chart spec rendered client-side (zero tokens spent on drawing). */
+  chart?: ChartSpec;
+  /** True when teacher/Socratic mode was active for this turn. */
+  teacherMode?: boolean;
+}
+
+/** Fetch real web images for a query (server proxy, SafeSearch enforced). */
+export async function fetchImages(query: string): Promise<ImageResult[]> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return [];
+  }
+  try {
+    const res = await fetch(`/api/ai/images?q=${encodeURIComponent(query)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.images) ? data.images : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface QuizGenerationResult {
@@ -215,10 +246,13 @@ export async function generateStudyResponse(
     deep?: boolean;
     memory?: string;
     wantTitle?: boolean;
+    wantImage?: boolean;
+    wantChart?: boolean;
+    teacherMode?: boolean;
     signal?: AbortSignal;
   }
 ): Promise<ChatResponseResult> {
-  const data = await postAi<{ success?: boolean; text?: string; mode?: ChatResponseResult['mode']; nudge?: string }>(
+  const data = await postAi<{ success?: boolean; text?: string; mode?: ChatResponseResult['mode']; nudge?: string; images?: ImageResult[]; chart?: any; teacherMode?: boolean }>(
     '/api/ai/chat',
     {
       message,
@@ -227,6 +261,9 @@ export async function generateStudyResponse(
       deep: options?.deep === true,
       memory: options?.memory,
       wantTitle: options?.wantTitle === true,
+      wantImage: options?.wantImage === true,
+      wantChart: options?.wantChart === true,
+      teacherMode: options?.teacherMode === true,
       history: options?.history?.slice(-6).map((m) => ({
         sender: m.sender,
         content: m.content,
@@ -245,6 +282,9 @@ export async function generateStudyResponse(
     mode: data.mode || 'chat',
     engine: 'deepseek',
     title: typeof data.nudge === 'string' ? data.nudge : undefined,
+    images: data.images,
+    chart: data.chart,
+    teacherMode: data.teacherMode,
   };
 }
 
@@ -264,6 +304,9 @@ export async function streamStudyResponse(
     deep?: boolean;
     memory?: string;
     wantTitle?: boolean;
+    wantImage?: boolean;
+    wantChart?: boolean;
+    teacherMode?: boolean;
     signal?: AbortSignal;
     onDelta: (text: string) => void;
   }
@@ -296,6 +339,9 @@ export async function streamStudyResponse(
           deep: options.deep === true,
           memory: options.memory,
           wantTitle: options.wantTitle === true,
+          wantImage: options.wantImage === true,
+          wantChart: options.wantChart === true,
+          teacherMode: options.teacherMode === true,
           history: options.history?.slice(-6).map((m) => ({
             sender: m.sender,
             content: m.content,
@@ -400,6 +446,9 @@ export async function streamStudyResponse(
       engine: 'deepseek',
       title: final.title ?? final.nudge,
       interactiveData: final.interactiveData,
+      images: final.images,
+      chart: final.chart,
+      teacherMode: final.teacherMode,
     };
   } finally {
     clearTimeout(timeoutId);

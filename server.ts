@@ -450,6 +450,59 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 /**
+ * Free web image search proxy (DuckDuckGo, no API key, no registration).
+ *
+ * Server-side only so the student's browser never touches a search API and
+ * SafeSearch is enforced at the proxy. DeepSeek decides whether an image is
+ * needed and what to search for; this endpoint just fetches real results.
+ */
+app.get('/api/ai/images', async (req: Request, res: Response) => {
+  const { q } = req.query;
+  if (!q || typeof q !== 'string' || !q.trim()) {
+    res.status(400).json({ error: 'A search query is required.' });
+    return;
+  }
+
+  try {
+    // DuckDuckGo image search JSON endpoint. SafeSearch=moderate for school use.
+    const encoded = encodeURIComponent(q.trim());
+    const duckRes = await fetch(
+      `https://duckduckgo.com/i.js?q=${encoded}&l=wt-wt&o=json&safesearch=1`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (ClassApp-AdomAI/1.0)',
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    if (!duckRes.ok) {
+      res.status(502).json({ error: 'Image search service is unavailable right now.' });
+      return;
+    }
+
+    const data = (await duckRes.json()) as any;
+    const results = Array.isArray(data?.results) ? data.results : [];
+
+    const images = results
+      .slice(0, 6)
+      .map((item: any) => ({
+        title: typeof item.title === 'string' ? item.title.slice(0, 120) : '',
+        image_url: typeof item.image === 'string' ? item.image : '',
+        thumbnail: typeof item.thumbnail === 'string' ? item.thumbnail : '',
+        source_url: typeof item.url === 'string' ? item.url : '',
+      }))
+      .filter((img: any) => img.image_url);
+
+    res.json({ query: q.trim(), images, count: images.length });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Image search failed.';
+    console.error('[AI Images Error]:', msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+/**
  * Shared preflight for every AI route. Returns false after the response has been sent.
  * Requires a signed-in user, then applies the per-user daily allowance (smaller until verified).
  */
@@ -521,7 +574,7 @@ app.post('/api/ai/chat', async (req: AuthedRequest, res: Response) => {
       return;
     }
 
-    const { message, contextSubject, fileContext, history, deep, memory, wantTitle } = req.body || {};
+    const { message, contextSubject, fileContext, history, deep, memory, wantTitle, wantImage, wantChart, teacherMode } = req.body || {};
     if (!message || typeof message !== 'string' || !message.trim()) {
       res.status(400).json({ success: false, error: 'A valid message string is required.' });
       return;
@@ -567,7 +620,46 @@ app.post('/api/ai/chat', async (req: AuthedRequest, res: Response) => {
         memory: typeof memory === 'string' ? memory.slice(0, 600) : undefined,
         deep,
         wantTitle,
+        wantImage: wantImage === true,
+        wantChart: wantChart === true,
+        teacherMode: teacherMode === true,
       });
+
+      // When DeepSeek asked for an image search, fetch real results from DuckDuckGo.
+      let images = result.images?.length ? result.images : undefined;
+      if (images && images.some((img: any) => img._searchQuery)) {
+        try {
+          const encoded = encodeURIComponent(String(images[0]._searchQuery));
+          const duckRes = await fetch(
+            `https://duckduckgo.com/i.js?q=${encoded}&l=wt-wt&o=json&safesearch=1`,
+            {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (ClassApp-AdomAI/1.0)',
+                Accept: 'application/json',
+              },
+            }
+          );
+          if (duckRes.ok) {
+            const data = (await duckRes.json()) as any;
+            const results = Array.isArray(data?.results) ? data.results : [];
+            images = results
+              .slice(0, 6)
+              .map((item: any) => ({
+                title: typeof item.title === 'string' ? item.title.slice(0, 120) : '',
+                image_url: typeof item.image === 'string' ? item.image : '',
+                thumbnail: typeof item.thumbnail === 'string' ? item.thumbnail : '',
+                source_url: typeof item.url === 'string' ? item.url : '',
+              }))
+              .filter((img: any) => img.image_url);
+          }
+        } catch {
+          // Image fetch failed: text answer still stands, images stay empty.
+        }
+      }
+      // Strip internal fields before sending to the client.
+      if (images) {
+        images = images.map(({ _searchQuery, ...rest }) => rest);
+      }
 
       res.json({
         success: true,
@@ -576,6 +668,9 @@ app.post('/api/ai/chat', async (req: AuthedRequest, res: Response) => {
         engine: 'deepseek',
         title: result.nudge,
         nudge: result.nudge,
+        images,
+        chart: result.chart,
+        teacherMode: result.teacherMode,
       });    } catch (err) {
       // The AI itself failed: give the student their request back. A deep request
       // was charged 2 credits, so refund 2 as well.
@@ -646,7 +741,7 @@ async function guardChatRequest(req: AuthedRequest, res: Response, deep: unknown
 
 // Streaming chat completion (Server-Sent Events). Words reach the student as they are written.
 app.post('/api/ai/chat/stream', async (req: AuthedRequest, res: Response) => {
-  const { message, contextSubject, fileContext, history, deep, memory, wantTitle } = req.body || {};
+  const { message, contextSubject, fileContext, history, deep, memory, wantTitle, wantImage, wantChart, teacherMode } = req.body || {};
   if (!message || typeof message !== 'string' || !message.trim()) {
     res.status(400).json({ success: false, error: 'A valid message string is required.' });
     return;
@@ -685,6 +780,9 @@ app.post('/api/ai/chat/stream', async (req: AuthedRequest, res: Response) => {
           memory: typeof memory === 'string' ? memory.slice(0, 600) : undefined,
           deep,
           wantTitle,
+          wantImage: wantImage === true,
+          wantChart: wantChart === true,
+          teacherMode: teacherMode === true,
           signal: clientGone.signal,
         },
         (delta) => {
@@ -693,6 +791,41 @@ app.post('/api/ai/chat/stream', async (req: AuthedRequest, res: Response) => {
         }
       );
 
+      // When DeepSeek asked for an image search, fetch real results before finishing.
+      let doneImages = result.images;
+      if (doneImages && doneImages.some((img: any) => img._searchQuery)) {
+        try {
+          const encoded = encodeURIComponent(String(doneImages[0]._searchQuery));
+          const duckRes = await fetch(
+            `https://duckduckgo.com/i.js?q=${encoded}&l=wt-wt&o=json&safesearch=1`,
+            {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (ClassApp-AdomAI/1.0)',
+                Accept: 'application/json',
+              },
+            }
+          );
+          if (duckRes.ok) {
+            const data = (await duckRes.json()) as any;
+            const results = Array.isArray(data?.results) ? data.results : [];
+            doneImages = results
+              .slice(0, 6)
+              .map((item: any) => ({
+                title: typeof item.title === 'string' ? item.title.slice(0, 120) : '',
+                image_url: typeof item.image === 'string' ? item.image : '',
+                thumbnail: typeof item.thumbnail === 'string' ? item.thumbnail : '',
+                source_url: typeof item.url === 'string' ? item.url : '',
+              }))
+              .filter((img: any) => img.image_url);
+          }
+        } catch {
+          // Image fetch failed: text already streamed, images stay empty.
+        }
+      }
+      if (doneImages) {
+        doneImages = doneImages.map(({ _searchQuery, ...rest }) => rest);
+      }
+
       sse('done', {
         success: true,
         text: result.text,
@@ -700,6 +833,9 @@ app.post('/api/ai/chat/stream', async (req: AuthedRequest, res: Response) => {
         engine: 'deepseek',
         title: result.nudge,
         nudge: result.nudge,
+        images: doneImages,
+        chart: result.chart,
+        teacherMode: result.teacherMode,
       });
     } catch (err) {
       // The AI itself failed: give the student their allowance back. 'Think deeper' was

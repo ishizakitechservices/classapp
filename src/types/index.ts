@@ -123,6 +123,10 @@ export interface ChatMessage {
     flashcards?: Flashcard[];
     summaryBullets?: string[];
   };
+  /** Chart spec rendered client-side (zero AI tokens). */
+  chartData?: any;
+  /** Real web images fetched server-side when DeepSeek decided an image helps. */
+  images?: any[];
 }
 
 export interface QuizQuestion {

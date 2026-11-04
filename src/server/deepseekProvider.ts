@@ -21,6 +21,7 @@ import {
   buildCurriculumBlock,
 } from '../shared/curriculum/index.ts';
 import { SUBJECTS } from '../shared/subjects.ts';
+import { type ChartSpec, getChartTemplate, linearGraphSpec, inequalitiesSpec } from '../shared/mathCharts.ts';
 
 /** Official DeepSeek model IDs, verified against https://api-docs.deepseek.com/ on 2026-10-23. */
 export const DEEPSEEK_MODEL_IDS = ['deepseek-flash', 'deepseek-v4-pro'] as const;
@@ -161,6 +162,52 @@ LENGTH, THE MOST IMPORTANT RULE:
 - No preamble before the answer and no summary after it. Start with the answer itself.
 - Never show your internal thinking, scratchpad, chain-of-thought, or reasoning tags. Output only the final answer.
 - These rules override any habit of producing long structured replies.`;
+
+/** Appended when the student asked for an image (wantImage). The model must
+ *  answer in text AND return a structured image-search request as JSON. */
+export const IMAGE_INTENT_PROMPT = `
+IMAGE MODE:
+- If the question would be helped by a real photograph or diagram from the web
+  (a place, a landmark, an animal, a plant, a device, a historical artifact,
+  a recipe result, a geographical feature), set needs_image to true and give a
+  short 2-4 word search_query optimised for image search.
+- If the question is pure maths, theory, or explanation that does not benefit
+  from a photo, set needs_image to false and search_query to "".
+- ALWAYS output a JSON block at the very end of your reply in this exact shape:
+  {"needs_image": true/false, "search_query": "..."}
+- Do not invent image URLs. Do not link to images you cannot verify.
+- The text answer comes first, then the JSON block on its own line.`;
+
+/** Appended when the student asked for a chart/graph (wantChart). The model
+ *  must return a structured ChartSpec as JSON. It never draws or links images. */
+export const CHART_INTENT_PROMPT = `
+CHART MODE:
+- If the question benefits from a graph or chart (linear graph, bar chart,
+  pie chart, scatter plot, system of inequalities), output a chart spec as
+  JSON at the very end of your reply in this exact shape:
+  {"chart": {"kind": "line|bar|pie|scatter|inequalities", "title": "...",
+  "xAxis": "...", "yAxis": "...", "labels": [...], "values": [...],
+  "points": [{"x": 1, "y": 2}], "inequalities": [{"expression": "y <= 2x + 1",
+  "label": "label", "colour": "#3b82f6"}], "topic": "...", "form": 2}}
+- For line graphs: provide labels (x values) and values (y values).
+- For inequalities: kind "inequalities" with an inequalities array of
+  {expression, label, colour}. Shaded regions are drawn client-side.
+- Do not invent image URLs. The browser renders the chart from this spec.`;
+
+/** Appended when teacher mode is on. Adom AI becomes a Socratic tutor: it
+ *  guides with questions instead of giving direct answers. */
+export const TEACHER_MODE_PROMPT = `
+TEACHER MODE (Socratic tutoring):
+- Do not give the direct answer immediately.
+- Break the problem into small steps and ask one guiding question at a time.
+- Give a hint first, then wait for the student to respond before revealing more.
+- If the student is stuck, give a worked micro-example with different numbers.
+- Keep every explanation at SHS/WASSCE level. Never jump to university maths.
+- End each turn by asking the student what they think comes next.`;
+
+/** JSON block patterns extracted from model output. */
+const IMAGE_JSON_RE = /\{[^{}]*"needs_image"[^{}]*\}/;
+const CHART_JSON_RE = /\{[^{}]*"chart"[^{}]*\}/;
 
 export type DeepSeekModelId = (typeof DEEPSEEK_MODEL_IDS)[number];
 
@@ -542,14 +589,24 @@ export class DeepSeekProvider {
     deep?: boolean;
     /** When true the reply ends with a TITLE line naming the conversation (no extra request). */
     wantTitle?: boolean;
+    /** When true, DeepSeek decides if a web image helps and returns a search query. */
+    wantImage?: boolean;
+    /** When true, DeepSeek returns a chart spec as structured JSON. */
+    wantChart?: boolean;
+    /** When true, Adom AI tutors Socratic-style instead of giving direct answers. */
+    teacherMode?: boolean;
   }): Promise<{
     text: string;
     mode: 'chat' | 'quiz' | 'flashcards' | 'notes' | 'explain';
     nudge?: string;
     calls: number;
     continued: boolean;
+    images?: Array<{ title: string; image_url: string; thumbnail: string; source_url: string; _searchQuery?: string }>;
+    chart?: ChartSpec;
+    teacherMode?: boolean;
   }> {
     const { messages, sanitizedMsg, model, maxTokens } = this.buildChatMessages(params);
+    const { wantImage, wantChart, teacherMode } = params;
     const maxSegments = MAX_CHAT_SEGMENTS;
 
     let replyText = '';
@@ -592,7 +649,7 @@ export class DeepSeekProvider {
       });
     }
 
-    const finalised = this.finaliseChatReply(replyText, sanitizedMsg);
+    const finalised = this.finaliseChatReply(replyText, sanitizedMsg, wantImage === true, wantChart === true, teacherMode === true);
     return { ...finalised, calls, continued };
   }
 
@@ -606,13 +663,16 @@ export class DeepSeekProvider {
     memory?: string;
     deep?: boolean;
     wantTitle?: boolean;
+    wantImage?: boolean;
+    wantChart?: boolean;
+    teacherMode?: boolean;
   }): {
     messages: ChatCompletionMessage[];
     sanitizedMsg: string;
     model: string;
     maxTokens: number;
   } {
-    const { message, contextSubject, curriculumContext, fileContext, history, memory, wantTitle } = params;
+    const { message, contextSubject, curriculumContext, fileContext, history, memory, wantTitle, wantImage, wantChart, teacherMode } = params;
 
     const systemPrompt = CURRICULUM_SYSTEM_PROMPT;
 
@@ -640,6 +700,21 @@ export class DeepSeekProvider {
 
     if (contextBlock) {
       messages.push({ role: 'system', content: contextBlock });
+    }
+
+    // Image intent: model must return structured image-search JSON at the end.
+    if (wantImage) {
+      messages.push({ role: 'system', content: IMAGE_INTENT_PROMPT });
+    }
+
+    // Chart intent: model must return a chart spec as structured JSON.
+    if (wantChart) {
+      messages.push({ role: 'system', content: CHART_INTENT_PROMPT });
+    }
+
+    // Teacher mode: Socratic tutoring instead of direct answers.
+    if (teacherMode) {
+      messages.push({ role: 'system', content: TEACHER_MODE_PROMPT });
     }
 
     // Keep the last few turns: enough continuity, small enough to stay cheap.
@@ -687,11 +762,17 @@ export class DeepSeekProvider {
   /** Pull the TITLE line and infer the study mode once the full reply is known. */
   private finaliseChatReply(
     rawText: string,
-    sanitizedMsg: string
+    sanitizedMsg: string,
+    wantImage: boolean,
+    wantChart: boolean,
+    teacherMode: boolean
   ): {
     text: string;
     mode: 'chat' | 'quiz' | 'flashcards' | 'notes' | 'explain';
     nudge?: string;
+    images?: Array<{ title: string; image_url: string; thumbnail: string; source_url: string; _searchQuery?: string }>;
+    chart?: ChartSpec;
+    teacherMode?: boolean;
   } {
     // Pull the TITLE line out of the answer so students never see the plumbing.
     let replyText = rawText;
@@ -701,6 +782,49 @@ export class DeepSeekProvider {
       nudge = titleMatch[1].trim().replace(/^["']|["'.]+$/g, '').slice(0, 48);
       replyText = replyText.replace(/^\s*TITLE:\s*.+$/im, '').trimStart();
     }
+
+    // Extract the image-search JSON block (if image mode was requested).
+    let images: Array<{ title: string; image_url: string; thumbnail: string; source_url: string }> | undefined;
+    if (wantImage) {
+      const imgMatch = replyText.match(IMAGE_JSON_RE);
+      if (imgMatch) {
+        try {
+          const intent = JSON.parse(imgMatch[0]);
+          if (intent.needs_image && typeof intent.search_query === 'string' && intent.search_query.trim()) {
+            // The server route will fetch real images for this query.
+            images = [{
+              title: `Image search: ${intent.search_query}`,
+              image_url: '', // filled by the server route after fetching
+              thumbnail: '',
+              source_url: '',
+              _searchQuery: intent.search_query.trim(),
+            } as any];
+          }
+        } catch {
+          // Invalid JSON: no images, text answer still stands.
+        }
+        // Remove the JSON block from the visible answer.
+        replyText = replyText.replace(IMAGE_JSON_RE, '').trim();
+      }
+    }
+
+    // Extract the chart spec JSON block (if chart mode was requested).
+    let chart: ChartSpec | undefined;
+    if (wantChart) {
+      const chartMatch = replyText.match(CHART_JSON_RE);
+      if (chartMatch) {
+        try {
+          const parsed = JSON.parse(chartMatch[0]);
+          if (parsed.chart && parsed.chart.kind) {
+            chart = parsed.chart as ChartSpec;
+          }
+        } catch {
+          // Invalid JSON: no chart, text answer still stands.
+        }
+        replyText = replyText.replace(CHART_JSON_RE, '').trim();
+      }
+    }
+
     replyText = replyText.trim();
 
     // Infer study mode for client UI
@@ -716,7 +840,7 @@ export class DeepSeekProvider {
       mode = 'explain';
     }
 
-    return { text: replyText, mode, nudge };
+    return { text: replyText, mode, nudge, images, chart, teacherMode: teacherMode || undefined };
   }
 
   /**
@@ -854,6 +978,9 @@ export class DeepSeekProvider {
     memory?: string;
     deep?: boolean;
     wantTitle?: boolean;
+    wantImage?: boolean;
+    wantChart?: boolean;
+    teacherMode?: boolean;
     signal?: AbortSignal;
   }, onDelta: (text: string) => void): Promise<{
     text: string;
@@ -861,8 +988,12 @@ export class DeepSeekProvider {
     nudge?: string;
     calls: number;
     continued: boolean;
+    images?: Array<{ title: string; image_url: string; thumbnail: string; source_url: string; _searchQuery?: string }>;
+    chart?: ChartSpec;
+    teacherMode?: boolean;
   }> {
     const { messages, sanitizedMsg, model, maxTokens } = this.buildChatMessages(params);
+    const { wantImage, wantChart, teacherMode } = params;
 
     let replyText = '';
     let calls = 0;
@@ -936,8 +1067,23 @@ export class DeepSeekProvider {
       throw new Error('DeepSeek returned no answer text. Please try again.');
     }
 
-    const finalised = this.finaliseChatReply(replyText, sanitizedMsg);
-    return { text: finalised.text, mode: finalised.mode, nudge: finalised.nudge || nudge, calls, continued };
+    const finalised = this.finaliseChatReply(
+      replyText,
+      sanitizedMsg,
+      params.wantImage === true,
+      params.wantChart === true,
+      params.teacherMode === true
+    );
+    return {
+      text: finalised.text,
+      mode: finalised.mode,
+      nudge: finalised.nudge || nudge,
+      calls,
+      continued,
+      images: finalised.images,
+      chart: finalised.chart,
+      teacherMode: finalised.teacherMode,
+    };
   }
 
   /**
