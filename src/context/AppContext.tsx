@@ -1214,19 +1214,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // so quiz/flashcard "Ask Adom AI" callbacks cannot start a second stream.
     if (aiAbortRef.current || isAiThinking) return;
 
-    // Auto-detect image intent: only genuine requests for a real photograph or
-    // diagram. Common filler ("what do", "show me", "view") must NOT trigger it,
-    // otherwise every routine question fires an unnecessary image search.
+    // Auto-detect image intent: genuine requests for a real photograph or diagram.
     const imageKeywords = [
-      'picture', 'photo', 'image', 'photograph', 'drawing', 'diagram of', 'look like',
+      'picture', 'photo', 'image', 'photograph', 'drawing', 'diagram', 'look like',
+      'show me', 'pics', 'pic', 'images of', 'photos of',
     ];
     const autoWantImage = imageKeywords.some((kw) => text.toLowerCase().includes(kw));
 
-    // Auto-detect chart intent: only genuine requests for a graph/chart. Broad math
-    // words ("function", "equation", "data", "solve") must NOT trigger it on their own.
+    // Auto-detect chart intent: genuine requests for a graph/chart.
     const chartKeywords = [
-      'graph', 'chart', 'plot', 'line graph', 'bar chart', 'pie chart', 'scatter plot',
-      'inequality', 'inequalities', 'sine wave', 'cosine wave',
+      'graph', 'graphs', 'chart', 'charts', 'plot', 'plots', 'line graph', 'bar chart',
+      'pie chart', 'scatter plot', 'inequality', 'inequalities', 'sine wave',
+      'cosine wave', 'make a graph', 'draw a graph',
     ];
     const autoWantChart = chartKeywords.some((kw) => text.toLowerCase().includes(kw));
 
